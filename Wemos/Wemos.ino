@@ -96,7 +96,7 @@ void updateData() {
         strcpy(pointerStr, IconFinal.c_str());
         nex.sendCommand(pointerStr);
         delete [] pointerStr;
-        break();
+        break;
       }
     }
    
