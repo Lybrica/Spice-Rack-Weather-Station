@@ -14,8 +14,8 @@ const char* WIFI_SSID     = "Demo";
 const char* WIFI_PASSWORD = "miksonvaja";
 
 // Setup
-const int UPDATE_INTERVAL_inSECS = 10 * 60; // Update every 10 minutes
-const float UTC_OFFSET = 3;                 // TimeClient settings
+int UPDATE_INTERVAL_inSECS = 10 * 60; // Update every 10 minutes
+float UTC_OFFSET = 3;                 // TimeClient settings
 const String WG_API_KEY = "6fc2508ebadf7b1c";
 const String WG_LANGUAGE = "EN";
 const String WG_COUNTRY = "EE";
@@ -104,6 +104,7 @@ void updateData() {
       nex.setComponentText("tagNight" + String(i + 1), "");
       nex.setComponentText("NexTemp" + String(i + 1), "");
     }
+    UPDATE_INTERVAL_inSECS = 30;
     readyforConnect = true;
   }
   else
@@ -262,6 +263,7 @@ void connectBg() {
     }
     delay(500);
   }
+  UPDATE_INTERVAL_inSECS = 10 * 60;
   readyforConnect = false;
 }
 
