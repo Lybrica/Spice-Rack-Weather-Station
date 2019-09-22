@@ -7,7 +7,6 @@
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <Nextion.h>
-#include <OpenWeatherMap.h>
 
 #define nextion Serial1
 time_t getNtpTime();
@@ -45,8 +44,8 @@ uint16_t localPort;  // local port to listen for UDP packets
 
 NTPClient timeClient(UTC_OFFSET);
 //EET Tallinn/////////////////////////////////////////////////NOT WORKING
-TimeChangeRule myDST = {"EEST", Fourth, Sun, Mar, 25, +180};    //Daylight time = UTC + 3 hours
-TimeChangeRule mySTD = {"EET", Fourth, Sun, Oct, 29, +120};     //Standard time = UTC + 2 hours
+TimeChangeRule myDST = {"EEST", Second, Sun, Mar, 25, 180};    //Daylight time = UTC + 3 hours
+TimeChangeRule mySTD = {"EET", First, Sun, Oct, 28, -120};     //Standard time = UTC - 2 hours
 Timezone myTZ(myDST, mySTD);
 
 TimeChangeRule *tcr;        //pointer to the time change rule, use to get TZ abbrev
@@ -185,14 +184,10 @@ void updateData() {
   nex.sendCommand("ref tagDay3");
   nex.sendCommand("ref tagNight3");
   nex.sendCommand("ref NexTemp3");
-  
-  OWM_conditions *ow_cond = new OWM_conditions;
-  owCC.updateConditions(ow_cond, ow_key, "ee", "Viimsi", "metric");
-  Serial.print("Current: ");
-  Serial.println("icon: " + ow_cond->icon + ", " + " temp.: " + ow_cond->temp + ", humid.: " + ow_cond->humidity) + ", wind.: " + ow_cond->speed);
 
   if (WiFi.status() == WL_CONNECTED) {
-    nex.setComponentText("NexTemp", ow_cond->temp);
+    nex.setComponentText("NexTemp", conditions.currentTemp);
+    Serial.println("CurrentTemp: " + conditions.currentTemp + "°C");
     nex.setComponentText("NexHumid", conditions.humidity);
     Serial.println("CurrentHumid: " + conditions.humidity);
     nex.setComponentText("NexFLike", conditions.feelslike);
@@ -205,7 +200,6 @@ void updateData() {
     windSpeed = String(windSpeedFloatRounded, 1) + "m/s";                           //Leave 1 nr after decimal
     nex.setComponentText("NexWSpeed", windSpeed);
     Serial.println("CurrentWindSpeed: " + windSpeed);
-    
 
     Serial.println("\nUpdating forecasts...");
     String dayIcon;
@@ -242,7 +236,6 @@ void updateData() {
       //    Serial.println("getPoP: " + forecasts[i].PoP);
 
     }
-    delete ow_cond;
   }
   readyForWUpdate = false;
   delay(1000);

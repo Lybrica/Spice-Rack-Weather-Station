@@ -1,25 +1,21 @@
 #include "WundergroundConditions.h"
 #include "WundergroundClient.h"
 #include <JsonListener.h>
-#include <Timezone.h>
 #include <NTPClient.h>
 #include <Ticker.h>
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <Nextion.h>
-#include <OpenWeatherMap.h>
 
 #define nextion Serial1
-time_t getNtpTime();
+
 // WIFI
 const char* WIFI_SSID     = "Parzival";
 const char* WIFI_PASSWORD = "EF13FCBC9D";
 
-static const char ntpServerName[] = "europe.pool.ntp.org";
-
 // Setup
 int UPDATE_INTERVAL_inSECS = 10 * 60; // Update every 10 minutes
-float UTC_OFFSET = 2;                 // TimeClient settings
+float UTC_OFFSET = 3;                 // TimeClient settings
 const String WG_API_KEY = "6fc2508ebadf7b1c";
 const String WG_LANGUAGE = "EN";
 const String WG_COUNTRY = "EE";
@@ -32,7 +28,6 @@ WundergroundClient wg(true);
 bool readyForWUpdate = false;
 bool readyForCUpdate = true;
 bool readyforConnect = false;
-bool readyForWiFiCheck = false;
 String lastUpdate = "-";
 String months[] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
 String dayIcons[] = {"chanceflurries", "chancerain", "chancesleet", "chancesnow", "chancetstorms", "clear", "cloudy", "flurries", "fog", "hazy", "mostlycloudy", "mostlysunny", "nt_chanceflurries", "nt_chancerain", "nt_chancesleet", "nt_chancesnow", "nt_chancetstorms", "nt_clear", "nt_cloudy", "nt_flurries", "nt_fog", "nt_hazy", "nt_mostlycloudy", "nt_mostlysunny", "nt_partlycloudy", "nt_partlysunny", "nt_rain", "nt_sleet", "nt_snow", "nt_sunny", "nt_tstorms", "nt_unknown", "partlycloudy", "partlysunny", "rain", "sleet", "snow", "sunny", "tstorms", "unknown"};
@@ -40,22 +35,11 @@ String icons[] = {"clear", "cloudy", "flurries", "fog", "hazy", "mostlycloudy", 
 String icons_alt[] = {"sunny", "nt_cloudy", "nt_flurries", "nt_fog", "nt_hazy", "partlysunny", "partlycloudy", "nt_rain", "nt_sleet", "nt_snow", "nt_sunny", "nt_partlysunny", "nt_partlycloudy"};
 
 WiFiUDP ntpUDP;
-uint16_t localPort;  // local port to listen for UDP packets
-
-
-NTPClient timeClient(UTC_OFFSET);
-//EET Tallinn/////////////////////////////////////////////////NOT WORKING
-TimeChangeRule myDST = {"EEST", Fourth, Sun, Mar, 25, +180};    //Daylight time = UTC + 3 hours
-TimeChangeRule mySTD = {"EET", Fourth, Sun, Oct, 29, +120};     //Standard time = UTC + 2 hours
-Timezone myTZ(myDST, mySTD);
-
-TimeChangeRule *tcr;        //pointer to the time change rule, use to get TZ abbrev
-time_t utc, local;
+NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600 * UTC_OFFSET, 60000);
 
 
 Ticker ticker;
 Ticker ticker1;
-Ticker ticker2;
 Nextion nex(nextion, 9600); //create a Nextion object named myNextion using the nextion serial port @ 9600bps
 
 /*===============================================================================
@@ -63,42 +47,36 @@ Nextion nex(nextion, 9600); //create a Nextion object named myNextion using the 
     |   enter the main screen.
     =================================================================================*/
 void connectWifi() {
+  //WiFi.hostname(ESP_HOST_NAME);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  delay(25);
   Serial.print("Connecting to ");
   Serial.println(WIFI_SSID);
   nex.setComponentText("textLoading", "Connecting to WiFi");
+  int tim = 0;
   String dots;
-  long conStart = millis();
-  Serial.println("");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
     dots = dots + ".";
     nex.setComponentText("textLoadingBar", dots);
-    if (millis() - conStart >= 10000) {                             //After 10 sec
+    if (tim == 20) {                                                    //After 10 sec restart
       nex.setComponentText("textLoading", "Connection failed, restating");
       nex.setComponentText("textLoadingBar", "If this persists, try restarting manually");
       delay(1000);
-      break;
+      ESP.restart();
     }
+    tim++;
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("");
-    Serial.println("WiFi connected!");
-    Serial.println(WiFi.localIP());
-    Serial.println();
-    nex.setComponentText("textLoading", "WiFi connected!");
-    nex.setComponentText("textLoadingBar", "");
-    delay(1000);
-    nex.sendCommand("page page0");
-
-    setTime(myTZ.toUTC(compileTime()));
-    localPort = random(1024, 65535);
-    ntpUDP.begin(localPort);
-    setSyncProvider(getNtpTime);
-    setSyncInterval(5 * 60);
-  }
+  Serial.println("");
+  Serial.println("WiFi connected!");
+  Serial.println(WiFi.localIP());
+  Serial.println();
+  nex.setComponentText("textLoading", "WiFi connected!");
+  nex.setComponentText("textLoadingBar", "");
+  delay(1000);
+  nex.sendCommand("page page0");
 }
 
 /*===============================================================================
@@ -110,17 +88,17 @@ void updateData() {
   wgc.updateConditions(&conditions, WG_API_KEY, WG_LANGUAGE, WG_ZMW_CODE);
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("\nNo connection");
-    nex.sendCommand("p0.pic=14");                                           //Set the icon to 'unknown'
+    nex.sendCommand("p0.pic=14");                                           //Set the icon to 'unknown'    
     nex.sendCommand("NexTemp.picc=14");
     nex.sendCommand("NexTimeSec.picc=14");
     nex.setComponentText("NexTemp", "");
     nex.setComponentText("NexHumid", "?");
     nex.setComponentText("NexFLike", "?");
     nex.setComponentText("NexWSpeed", "?");
-    for (int i = 0; i < 3; i++) {
+    for (int i=0; i < 3; i++) {
       String dayIconErased = "p" + String(i + 1) + ".pic=55";
       char *pointerString = new char[dayIconErased.length() + 1];
-      strcpy(pointerString, dayIconErased.c_str());
+      strcpy(pointerString, dayIconErased.c_str()); 
       nex.sendCommand(pointerString);
       delete [] pointerString;
       nex.setComponentText("tagDay" + String(i + 1), "");
@@ -135,31 +113,31 @@ void updateData() {
     WGConditions conditions;
     wgc.updateConditions(&conditions, WG_API_KEY, WG_LANGUAGE, WG_ZMW_CODE);
     for (int i = 0; i < sizeof(icons) / sizeof(icons[0]); i++) {            //Loop through Icons array
-      if (conditions.weatherIcon == icons[i] || conditions.weatherIcon == icons_alt[i]) {
-        Serial.println("Icon index: " + String(i) + " | Icon: " + conditions.weatherIcon);
-        String IconFinal = "p0.pic=" + String(i);  //forecast icons start from id 15 (on nextion)
-        char *pointerString = new char[  IconFinal.length() + 1];                //Covert string to *char
-        strcpy(pointerString, IconFinal.c_str());                              //
-        nex.sendCommand(pointerString);                                           //Change the icon on screen
-        delete [] pointerString;                                                  //Delete the *char to free up mem
-
-        IconFinal = "NexTemp.picc=" + String(i);
-        char *pointerStr = new char[  IconFinal.length() + 1];
-        strcpy(pointerStr, IconFinal.c_str());
-        nex.sendCommand(pointerStr);
-        delete [] pointerStr;
-
-        IconFinal = "NexTimeSec.picc=" + String(i);
-        char *pointerSt = new char[  IconFinal.length() + 1];
-        strcpy(pointerSt, IconFinal.c_str());
-        nex.sendCommand(pointerSt);
-        delete [] pointerSt;
-        break;
+        if (conditions.weatherIcon == icons[i] || conditions.weatherIcon == icons_alt[i]) {
+          Serial.println("Icon index: " + String(i) + " | Icon: " + conditions.weatherIcon);
+          String IconFinal = "p0.pic=" + String(i);  //forecast icons start from id 15 (on nextion)
+          char *pointerString = new char[  IconFinal.length() + 1];                //Covert string to *char
+          strcpy(pointerString, IconFinal.c_str());                              //
+          nex.sendCommand(pointerString);                                           //Change the icon on screen
+          delete [] pointerString;                                                  //Delete the *char to free up mem
+          
+          IconFinal = "NexTemp.picc=" + String(i);
+          char *pointerStr = new char[  IconFinal.length() + 1];
+          strcpy(pointerStr, IconFinal.c_str());
+          nex.sendCommand(pointerStr);
+          delete [] pointerStr;
+          
+          IconFinal = "NexTimeSec.picc=" + String(i);
+          char *pointerSt = new char[  IconFinal.length() + 1];
+          strcpy(pointerSt, IconFinal.c_str());
+          nex.sendCommand(pointerSt);
+          delete [] pointerSt;
+          break;
+        }
       }
-    }
   }
-
-  //Refresh nextion elements, otherwise background image (p0) will apear on top.
+   
+ //Refresh nextion elements, otherwise background image (p0) will apear on top.    
   nex.sendCommand("ref p0");
   nex.sendCommand("ref NexTime");
   nex.sendCommand("ref NexTimeSec");
@@ -185,19 +163,15 @@ void updateData() {
   nex.sendCommand("ref tagDay3");
   nex.sendCommand("ref tagNight3");
   nex.sendCommand("ref NexTemp3");
-  
-  OWM_conditions *ow_cond = new OWM_conditions;
-  owCC.updateConditions(ow_cond, ow_key, "ee", "Viimsi", "metric");
-  Serial.print("Current: ");
-  Serial.println("icon: " + ow_cond->icon + ", " + " temp.: " + ow_cond->temp + ", humid.: " + ow_cond->humidity) + ", wind.: " + ow_cond->speed);
 
   if (WiFi.status() == WL_CONNECTED) {
-    nex.setComponentText("NexTemp", ow_cond->temp);
+    nex.setComponentText("NexTemp", conditions.currentTemp);
+    Serial.println("CurrentTemp: " + conditions.currentTemp + "°C");
     nex.setComponentText("NexHumid", conditions.humidity);
     Serial.println("CurrentHumid: " + conditions.humidity);
     nex.setComponentText("NexFLike", conditions.feelslike);
     Serial.println("CurrentFeelsLike: " + conditions.feelslike);
-
+  
     String windSpeed = conditions.windSpeed;
     windSpeed.remove(windSpeed.length() - 4);                                       //Remove 'km/h'
     float windSpeedFloat = windSpeed.toFloat() * 0.277778;                          //Convert to m/s
@@ -205,8 +179,7 @@ void updateData() {
     windSpeed = String(windSpeedFloatRounded, 1) + "m/s";                           //Leave 1 nr after decimal
     nex.setComponentText("NexWSpeed", windSpeed);
     Serial.println("CurrentWindSpeed: " + windSpeed);
-    
-
+  
     Serial.println("\nUpdating forecasts...");
     String dayIcon;
     String dayTitle;
@@ -240,22 +213,11 @@ void updateData() {
       nex.setComponentText("NexTemp" + String(dayIndex + 1), dayTemp);
       Serial.println("ForecastTemp: " + dayTemp);
       //    Serial.println("getPoP: " + forecasts[i].PoP);
-
+  
     }
-    delete ow_cond;
   }
   readyForWUpdate = false;
   delay(1000);
-}
-
-//Function to return the compile date and time as a time_t value
-time_t compileTime(void)  {
-  tmElements_t tm;
-  time_t t;
-
-  breakTime(now(), tm);
-  t = makeTime(tm);
-  return t;
 }
 
 /*===============================================================================
@@ -268,12 +230,12 @@ void updateClock() {
   nex.setComponentText("NexTime", timeClient.getFormattedTime().substring(0, 5));         //Cut out seconds
   String secs;
   if (timeClient.getSeconds() < 10) {
-    secs = "0" + String(timeClient.getSeconds());
+    secs = "0" + String(timeClient.getSeconds());    
   } else {
     secs = timeClient.getSeconds();
   }
   nex.setComponentText("NexTimeSec", ":" + secs);
-
+  
   for (int i = 0; i < 12; i++) {                      //Loop through months
     if (timeClient.getMonth() == i + 1) {             //Add 1 becasue Month starts from 1
       nex.setComponentText("NexMonth", months[i]);
@@ -298,7 +260,7 @@ void connectBg() {
   int tim = 0;
   for (int i = 0; i < 20; i++) {
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\n\nConnected");
+      Serial.println("\n\nConnected");      
       updateData();
     }
     delay(500);
@@ -316,11 +278,6 @@ void setGoodForClockUpdate() {
   readyForCUpdate = true;
 }
 
-void setGoodForWiFiCheck() {
-  readyForWiFiCheck = true;
-  Serial.println("\n\nreadyForWiFiCheck = tru");
-}
-
 void setup() {
   Serial.begin(115200);
   nex.init();
@@ -329,8 +286,7 @@ void setup() {
 
   updateData();
   ticker.attach(UPDATE_INTERVAL_inSECS, setGoodForWeatherUpdate);        //Set a timer for updating weather info
-  ticker1.attach(1, setGoodForClockUpdate);                              //Set a timer for updating clock
-  ticker1.attach(60, setGoodForWiFiCheck);                                //Set a timer for checking the WiFi connection
+  ticker1.attach(1, setGoodForClockUpdate);                              //Set a timer for updating clock  
 }
 
 void loop() {
@@ -340,11 +296,9 @@ void loop() {
   if (readyForCUpdate) {
     updateClock();
   }
-  if (readyForWiFiCheck) {
-    if (WiFi.status() != WL_CONNECTED) {
-      connectWiFi();
-    }
+  if (readyforConnect) {
+    connectBg();
   }
-
-
+  
+  
 }
